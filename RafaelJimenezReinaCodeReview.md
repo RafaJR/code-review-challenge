@@ -5,7 +5,7 @@ Mis consideraciones personales y propuestas de mejora para la versión actual de
 ## Índice de contenido
 * [Arquitectura](#arquitectura)
 * [Controladores](#controladores)
-* [Generalidades sobre el código](#Generalidades sobre el código)
+* [Constantes y métodos estáticos](#constantes)
 
 ## Arquitectura
 Mis consideraciones sobre el modo de estructuración general del proyecto.
@@ -89,9 +89,28 @@ Cómo se puede ver, se trata de llamar a un método después del proceso de arra
 de servicios. Tendría un código similar al del constructor de 'AdClassifierLoader', pero cargaría las listas en la base de datos en memoria.
 Para ralizar esta función, las clases de entidad deberían estar debidamente mapeadas, tema sobre el cual me explayaré en el apartado sobre
 las entidaddes.
-
-## Generalidades sobre el código
-Algunas críticas constructivas sobre formas de escribir código que he observado en varios puntos del proyecto.
+## Controladores
+Ideas sobre la implementación de los 'endpoints' en el controlador.
+### Manejo de excepciones y respuestas fallidas
+En el controlador 'AdsController' únicamente se están considerando respuestas 'http' de estado '200', es decir, válidas.
+Sería conveniente llevar un control de las excepciones que puedan producirse en el servicio o en el acceso a datos,
+capturarlas en el controlador y devolver una respuesta de estado '500' u otro cuando estas se produzcan.
+También sería útil diseñar excepciones customizadas para casos específicos de la lógica de negocio que se está aplicando
+y manejarlas en el controlador de igual modo. Por ejemplo, podría crearse una excepción que se lanzaría en el servicio
+cuando el cálculo de la puntuación de un anuncio sea menor de 0 o mayor de 100.
+El código en el método del controlador, por ejemplo para el 'endpoint' cuyo contexto es "/ads/public", podría ser semejante
+a este:
+	
+	@GetMapping("/ads/public")
+    public ResponseEntity<?> publicListing() {
+    	try {
+    		return ResponseEntity.ok(adsService.findPublicAds());
+    	}catch(Exception e) {
+    		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("An error happened when trying to find the public ads.");
+    	}
+    }
+## Constantes
+Mis consideraciones sobre la forma de declarar las constantes en el proyecto.
 ### Nombres de constantes poco representativas
 Quizá sea más aclaratorio que los nombres de las constantes hicieran referencia a su significado y no al valor de su contenido.
 Por ejemplo, se observan constantes empleadas en el cálculo de las puntuaciones tales como:
@@ -104,13 +123,13 @@ Por ejemplo, se observan constantes empleadas en el cálculo de las puntuaciones
     public static final int FORTY_NINE = 49;
     public static final int FIFTY = 50;
     public static final int ONE_HUNDRED = 100;
-Aparte de que estos nombres no aportan ninguna información sobre la razón de ser o el sentido de estas constantes en la aplicación,
+Aparte de que estos nombres no aportan ninguna información sobre la función de estas constantes en la aplicación,
 si en algún momento de la evolución del proyecto se decidiese cambiar alguno de estos valores habría que cambiar también su nombre y,
-por tanto, habría que todas las referencias a dicha constante en todo el código.
+por tanto, habría que cambiar todas las referencias a dicha constante en todo el código.
 Además, se están usando los mismos valores para conceptos distintos y no hay garantía de que esta condición siga siendo viable en el futuro;
 por ejemplo, se está usando 'TWENTY = 20' para fijar el sumando de puntuación para una foto con calidad HD y el mínimo de palabras que debe
 tener una descripción para puntuar "+10".
-En cambio, si se nombran las contantes en base a su significado, por ejemplo:
+En cambio, si se nombran las contantes en base a su significado, por ejemplo de esta manera:
 
     public static final int DESCRIPTION_IS_PRESENT_SCORE = 5;
     public static final int NO_PICS_SCORE = -10;
@@ -123,11 +142,12 @@ En cambio, si se nombran las contantes en base a su significado, por ejemplo:
     public static final int LARGE_HOUSE_DESCRIPTION_SCORE = 50;
     public static final int MAX_SCORE_LIMIT = 100;
 Los nombres resultan mucho más indicativos de lo que representan, se pueden cambiar sus valores sin tener que renombrar las constantes,
-y no se generan conflictos por valores que representan más de un concepto. Apreciese también que, al fijar los valores de puntuación deben
-restarse como negativos (NO_PICS_SCORE = -10), se facilita la función de calcular dicha puntuación en el servicio, permitiéndo resolver el
+y no se generan conflictos por valores que representan más de un concepto. Apreciese también que, al fijar los valores de puntuación que
+deben restarse como negativos (NO_PICS_SCORE = -10), se facilita la función de calcular dicha puntuación en el servicio, permitiéndo resolver el
 cálculo con una simple suma, sin tener que prestar atención a qué valores han de restarse o sumarse.
+## Generalidades
+Mis consideraciones sobre aspectos más transversales observables en el código.
+### Trazabilidad
+No se está aplicando niguna trazabilidad, es decir, 'logs'.
 
-## Controladores
-
-### Parámetros en deshuso
 
