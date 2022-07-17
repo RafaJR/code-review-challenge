@@ -35,8 +35,8 @@ Un ejemplo válido de modelo de arquitectura hexagonal podría ser este:
 		|	\_[entities]
 		|           Clases de mapeo de tablas de la base de datos o entidades.
 		\_[model]
-		|	|   Clases tipo 'POJO' conocidas como DTOs (Data Transfer Object), empleadas para la transferencia de datos entre los 'endpoints',
-		|	|   usualmente siendo transformadas a formato 'JSON'.
+		|	|   Clases tipo 'POJO' conocidas como DTOs (Data Transfer Object), empleadas para la transferencia de datos entre los 
+            |   'endpoints', usualmente siendo transformadas a formato 'JSON'.
 		|	\_[input]
 		|	|	    DTOs empleados como datos de entrada en el 'endpoint' a través del 'body' de la petición o por parámetro de la 'URL'.
 		|	\_[output]
@@ -47,20 +47,21 @@ Un ejemplo válido de modelo de arquitectura hexagonal podría ser este:
 		\_[constants]
 		|	    Clases continentes de primitivas e instancias estáticas que serán manendrán el mismo valor durante toda la ejecución
 		|	    en diferentes lugares de uso, por lo que interesa agruparlas en una clase para evitar duplicidades en el código.
-		|	    También puede contener métodos estáticos de uso recurrente, por ejemplo métodos de cálculo que sean necesarios en más de un servicio.
+		|	    También puede contener métodos estáticos de uso recurrente, por ejemplo métodos de cálculo que sean necesarios en más de un 
+        |       servicio.
 		\_[exceptions]
 		|	    Definicion de excepciones customizadas para nuestra lógica de negocio.
-		|	    Por ejemplo, podrían diseñarse y lanzarse excepciones para casos de anuncios con puntuaciones por debajo de 0 o por encima de 100
-		|	    en el proceso de guaradado de los mismos.
+		|	    Por ejemplo, podrían diseñarse y lanzarse excepciones para casos de anuncios con puntuaciones por debajo de 0 o por encima 
+        |       de 100. en el proceso de guaradado de los mismos.
 		\_[mappers]
 			    Definición de métodos de conversión de DTOs a entidades y viceversa siguiendo el patrón 'org.mapstruct.Mapper'.
 
 El resto de los comentarios se articularán en base a esta arquitectura, indicando de componentes deben de formar parte de cada paquete
 cuando estos realmente no se ajustan a este modelo propuesto.
 ### Base de datos embebida en memoria
-Con el fin de simular la interacción con una base de datos real, en lugar de cargar unas simples listas en el constructor de la clase del 'dao'
-('InMemoryPersistence.java'), se podría configurar una base de datos embebida en memoria de tipo 'H2' y cargarla con datos reales después del evento de
-desliegue de la aplicación.
+Con el fin de simular la interacción con una base de datos real, en lugar de cargar unas simples listas en el constructor de la clase del 
+'dao' ('InMemoryPersistence.java'), se podría configurar una base de datos embebida en memoria de tipo 'H2' y cargarla con datos reales 
+después del evento de desliegue de la aplicación.
 Esta configuración, podría hacerse fácilmente en el archivo 'application.yml' de la siguiente manera:
 
 	server:
@@ -76,11 +77,12 @@ Esta configuración, podría hacerse fácilmente en el archivo 'application.yml'
 	      enabled: true
 	  jpa:
 	    database-platform: org.hibernate.dialect.H2Dialect
-Como se puede ver, esta configuración creará una base de datos embebida en memoria (solo disponible en tiempo de ejecución del servicio, por lo que los datos
-se perderán al apagar dicho servicio) denominada 'adclassifierdb', accesible a través del mismo puerto del servicio (8080) y con consola habilitada (http://localhost:8081/h2-console).
-Esta base de datos se puede cargar justo después del despliegue añadiendo un "Listener" con un método que se ocupará de dicha carga tras escuchar el evento de despliegue.
-Este "Listener" puede estar ubicado en el mismo paquete de la clase principal de carga del servicio ('com.idealista'), podría llamarse 'AdClassifierLoader.java' y su código
-aproximado podría ser tal que así:
+Como se puede ver, esta configuración creará una base de datos embebida en memoria (solo disponible en tiempo de ejecución del servicio, por
+lo que los datos se perderán al apagar dicho servicio) denominada 'adclassifierdb', accesible a través del mismo puerto del servicio (8080) 
+y con consola habilitada (http://localhost:8081/h2-console).
+Esta base de datos se puede cargar justo después del despliegue añadiendo un "Listener" con un método que se ocupará de dicha carga tras 
+escuchar el evento de despliegue (es decir, que se ejecuta al cargar la aplicacion). Este "Listener" puede estar ubicado en el mismo paquete
+de la clase principal de carga del servicio ('com.idealista'), podría llamarse 'AdClassifierLoader.java' y su código aproximado podría ser:
 
     @Component
     public class AdClassifierLoader implements ApplicationListener<ApplicationReadyEvent> {
@@ -114,20 +116,24 @@ controlador, por ejemplo para el 'endpoint' cuyo contexto es "/ads/public", podr
     		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("An error happened when trying to find the public ads.");
     	}
     }
+### Sobre el 'endpoint' para calcular las puntuaciones
+Las puntuaciones se establecen en la entidad llamando a un 'endpoint' que actualiza sus valores. Esto plantea un problema de consistencia de
+datos pues, si estos anuncios actualizados de cualquier forma que afecte a su puntuación, dicha puntuación permancerá inconsistente con los
+otros datos que la afectan. Es decir, la puntuación no se corresponderá con la descripción, las fotos y demás. Naturalmente, si se consultan
+los anuncios antes de llamar a este 'endpoint', la puntuación no será la correcta, por lo que podremos tener listas de anuncios relevantes
+con anuncios que realmente son irrelevantes y viceversa.
 
+Esto podría corregirse haciendo que la puntuación sea un valor transitorio y auto-calculado en los procesos de consulta, lo cual permitiría
+prescindir del 'endpoint' de calculo y de los servicios a los que llama. La manera en que se podría implementar una solución como esta, 
+con sus ventajas e inconvenientes, se explicará con más detalle en el apartado sobre la capa 'DAO'.
 ## Constantes
-
 Mis consideraciones sobre la forma de declarar las constantes en el proyecto.
-
 ### Ajuste en el modelo de arquitectura propuesto
-
 La única clase de constantes que hay debería ubicarse en este paquete del modelo hexagola propuesto:
 
         com.idealista.constants
             Constants
-
 ### Nombres de constantes poco representativas
-
 Quizá sea más aclaratorio que los nombres de las constantes hicieran referencia a su significado y no al valor de su contenido. Por ejemplo,
 se observan constantes empleadas en el cálculo de las puntuaciones tales como:
 
@@ -157,33 +163,25 @@ En cambio, si se nombran las contantes en base a su significado, por ejemplo de 
     public static final int MEDIUM_DESCRIPTION_MAX_LIMIT = 49;
     public static final int LARGE_HOUSE_DESCRIPTION_SCORE = 50;
     public static final int MAX_SCORE_LIMIT = 100;
-
 Las ventajas son que nombres resultan mucho más indicativos de lo que representan, se pueden cambiar sus valores sin tener que renombrar las
 constantes y no se generan conflictos por valores que representan más de un concepto. Apreciese también que, al fijar los valores de
 puntuación que deben restarse como negativos (NO_PICS_SCORE = -10), se facilita la función de calcular dicha puntuación en el servicio,
 permitiéndo resolver elcálculo con una simple suma, sin tener que prestar atención a qué valores han de restarse o sumarse.
 
 ## Capa de servicio
-
-Mis consideración sobre la implementación de la lógica de negocio en la capa de servicio
-
+Mis consideración sobre la implementación de la lógica de negocio en la capa de servicio.
 ### Ajuste en el modelo de arquitectura propuesto
-
 La interfaz y la implementación del servicio podrían ubicarse dentro del modelo de arquitectura hexagonal propuesto así:
 
     com.idealista.service
         AdsService
         AdsServiceImpl
-
-### Ordenación de listas en la capa 'dao'
-
+### Ordenación de listas en la capa 'dao'.
 En método 'findPublicAds' la lista resultante de la consulta a la fuente de datos está siendo ordenada inmediatamene después de la consulta,
 sin comprobar si realmente contiene datos. Sería más eficiente realizar la ordenación de la lista en la capa 'dao', en el mismo método de la
 consulta y resolverlo todo con una única llamada al 'dao'. La mejor forma sería mediante la implementación de una interfaz de JPA, sobre lo
-cual me explayaré en el apartado correspondiente. Esta llamada podría realizarse en el servicio de esta manera:
-
+cual me explayaré en el apartado correspondiente.
 ### Tratamiento de estructuras de datos con 'streams' y expresiones 'lambda'
-
 En los métodos 'findPublicAds' y 'findQualityAds' del servicio  'AdsserviceImppl' se realiza la conversión de entidades a DTOs de salida
 mediante un recorrido iterativo de la propia lista. Se podría compactar el código y mejorar la eficiencia de estos métodos aplicando una
 función anónima expresada en modo 'lambda' sobre la lista tratándola como un tipo 'stream'. Por ejemplo, en el método 'findPublicAds' se
@@ -231,7 +229,6 @@ Este 'Mapper' podría llamarse 'IPublicAdMapper' y tendría que inyectarse en nu
     
         return ads.stream().map(ad -> publicAdMapper.map(ad)).collect(Collectors.toList());
     }
-
 # Mappers
 La implementción del patrón 'Mapper', complementario al patrón 'Data Transfer Object', permitirá un más fácil conversión de tipos de entre 
 entidades y DTOs en una capa propia para esta fin, impidiendo la repetición de código y manteniendo la capa de servicio más limpia.
