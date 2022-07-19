@@ -11,6 +11,7 @@ del portal "idealista.com".
 * [Capa de servicio](#capa-de-servicio)
 * [Mappers](#mappers)
 * [Model](#model)
+* [Dao](#dao)
 ## Arquitectura
 Mis consideraciones sobre el modo de estructuración general del proyecto.
 ### Arquitectura hexagonal
@@ -55,14 +56,22 @@ Un ejemplo válido de modelo de arquitectura hexagonal podría ser este:
         |       de 100. en el proceso de guaradado de los mismos.
 		\_[mappers]
 			    Definición de métodos de conversión de DTOs a entidades y viceversa siguiendo el patrón 'org.mapstruct.Mapper'.
-
 El resto de los comentarios se articularán en base a esta arquitectura, indicando de componentes deben de formar parte de cada paquete
 cuando estos realmente no se ajustan a este modelo propuesto.
 ### Base de datos embebida en memoria
 Con el fin de simular la interacción con una base de datos real, en lugar de cargar unas simples listas en el constructor de la clase del 
 'dao' ('InMemoryPersistence.java'), se podría configurar una base de datos embebida en memoria de tipo 'H2' y cargarla con datos reales 
 después del evento de desliegue de la aplicación.
-Esta configuración, podría hacerse fácilmente en el archivo 'application.yml' de la siguiente manera:
+En primer lugar, se necesita la librería de 'h2', por lo que la configuramos en nuestro "pom.xml":
+
+    <dependency>
+        <groupId>com.h2database</groupId>
+		<artifactId>h2</artifactId>
+		<scope>runtime</scope>
+    </dependency>
+Cómo se puede ver, se ha configurado para el ámbito de ejecución, ya que necesitamos que 'hd' genere la base de datos en tiempo de 
+ejecución, inmediatemente después de cargar el servicio.
+Y finalmente tenemos que configurar la base de datos en el archivo 'application.yml' de la siguiente manera:
 
 	server:
 	  port: 8080
@@ -79,7 +88,7 @@ Esta configuración, podría hacerse fácilmente en el archivo 'application.yml'
 	    database-platform: org.hibernate.dialect.H2Dialect
 Como se puede ver, esta configuración creará una base de datos embebida en memoria (solo disponible en tiempo de ejecución del servicio, por
 lo que los datos se perderán al apagar dicho servicio) denominada 'adclassifierdb', accesible a través del mismo puerto del servicio (8080) 
-y con consola habilitada (http://localhost:8081/h2-console).
+y con consola habilitada (http://localhost:8080/h2-console).
 Esta base de datos se puede cargar justo después del despliegue añadiendo un "Listener" con un método que se ocupará de dicha carga tras 
 escuchar el evento de despliegue (es decir, que se ejecuta al cargar la aplicacion). Este "Listener" puede estar ubicado en el mismo paquete
 de la clase principal de carga del servicio ('com.idealista'), podría llamarse 'AdClassifierLoader.java' y su código aproximado podría ser:
@@ -125,7 +134,7 @@ con anuncios que realmente son irrelevantes y viceversa.
 
 Esto podría corregirse haciendo que la puntuación sea un valor transitorio y auto-calculado en los procesos de consulta, lo cual permitiría
 prescindir del 'endpoint' de calculo y de los servicios a los que llama. La manera en que se podría implementar una solución como esta, 
-con sus ventajas e inconvenientes, se explicará con más detalle en el apartado sobre la capa 'DAO'.
+con sus ventajas e inconvenientes, se explicará con más detalle en el apartado sobre [Mapeo de entidad mediante anotaciones JPA](#mapeo-de-entidad-mediante-anotaciones-JPA).
 ## Constantes
 Mis consideraciones sobre la forma de declarar las constantes en el proyecto.
 ### Ajuste en el modelo de arquitectura propuesto
@@ -295,7 +304,209 @@ de las anotaciones de 'lombok' en el DTO 'PublicAd'
 Cómo se puede ver, también propongo incluir la anotación '@ToString'. Esta anotación sobreescribe el método 'toString' de la superclase
 'Object' de modo que, en lugar del código "hash", imprime los nombres de las variables del DTO seguidas de su valor. Esto nos puede ser útil
 a la hora de incluir ciertra trazabilidad a los procesos. Sobre esto me explayaré mas en el apartado sobre [generalidades](#generalidades).
+## Dao
+En el apartado "[Base de datos embebida en memoria](#base-de-datos-embebida-en-memoria)" se indicó la necesidad de mapear debidamente las
+clases de entidad para poder generar los métodos de acceso a las fuentes de datos con 'JPA'. También se comentó en el apartado sobre 
+"[Sobre el 'endpoint' para calcular las puntuaciones](#sobre-el-endpoint-para-calcular-las-puntuaciones)" que el método de calculo de las
+puntuaciones se podría trasladar a la entidad haciendo de 'score' un campo transitorio autocalculado.
+
+A continuación se explicará como se podrían llevar a cabo estos desarrollos.
+### Ajuste en el modelo de arquitectura propuesto
+El lugar donde crear estos 'Mapper' en la arquitectura propuesta sería aquí:
+
+    \_[com.idealista]
+    \_[dao]
+    	\_[entities]
+### Mapeo de entidad mediante anotaciones JPA
+La implementación de la especificación JPA de Hibernate nos permite realizar fácilmente el mapeo de una clase POJO de java a una tabla de
+base de datos, es decir, nos ayuda a generar una entidad.
+En primer lugar, necesitamos la librería específica para 'springboot' creada para este fin, por lo que configuramos nuestro "pom.xml" para
+que maven se ocupe:
+
+    <dependency>
+	    <groupId>org.springframework.boot</groupId>
+	    <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+Las entidades mínimas que vamos a necesitar para persistir los datos son las correspondientes a las clases 'Ad' y 'Picture', manteniendo
+ambas una relación de "muchos a uno", ya que un anuncio puede tener una o más fotografías. La clases 'Typology' podría ser también entidade
+con la misma relación "muchos a uno" con 'Ad', pero ya que sus valores posibles son limitados, para simplificar vamos a mapearla como 
+enumeradore dentro de la entidad 'Ad'.
+
+Además del mapeo de las entidades, también vamos a emplear las anotaciones de 'lombok' para ahorro de código y para implementar el patrón
+'Builder', del mismo modo que ya hicimos con los DTOs.
+#### Entidad 'Ad'
+En primer lugar, vamos a mapear la clase más importante, la que ha de contener los datos de los anuncios, la entidad 'Ad':
+    
+    Entity(name = "ad")
+    @Table(name = "T_AD")
+    
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @ToString
+    public class Ad {
+        
+        @Id
+	    @GeneratedValue(strategy = GenerationType.SEQUENCE)
+        @Column(name = "ID_AD")
+        private Integer id;
+        @Enumerated(EnumType.STRING)
+        @Column(name = "TYPOLOGY")
+        private Typology typology;
+        @Column(name = "DESCRIPTION")
+        private String description;
+        @OneToMany(mappedBy = "fk_ad", cascade = CascadeType.ALL, orphanRemoval = true)
+        private List<Picture> pictures;
+        @Column(name = "HOUSE_SIZE")
+        private Integer houseSize;
+        @Column(name = "GARDEN_SIZE")
+        private Integer gardenSize;
+        @Transient
+        private Integer score;
+        @Column(name = "IRRELEVANT_SINCE")
+        private LocalDateTime irrelevantSince;
+
+        public boolean isComplete() {
+        return (Typology.GARAGE.equals(typology) && !pictures.isEmpty())
+                || (Typology.FLAT.equals(typology) && !pictures.isEmpty() && description != null && !description.isEmpty() && houseSize != null)
+                || (Typology.CHALET.equals(typology) && !pictures.isEmpty() && description != null && !description.isEmpty() && houseSize != null && gardenSize != null);
+       }
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            Ad ad = (Ad) o;
+            return Objects.equals(id, ad.id) && typology == ad.typology && Objects.equals(description, ad.description) && Objects.equals(pictures, ad.pictures) && Objects.equals(houseSize, ad.houseSize) && Objects.equals(gardenSize, ad.gardenSize) && Objects.equals(score, ad.score) && Objects.equals(irrelevantSince, ad.irrelevantSince);
+        }
+    
+        @Override
+        public int hashCode() {
+            return Objects.hash(id, typology, description, pictures, houseSize, gardenSize, score, irrelevantSince);
+        }
+    }
+Algunas aclaraciones sobre el mapeo de esta entidad 'Ad':
+- Se ha indicado que se ha de crear tabla denominada "T_AD" asociada a la clase, lo cual hace de ella una entidad:
+---
+    Entity(name = "Ad")
+    @Table(name = "T_AD")
+- El campo 'id' se ha hecho autogenerado de forma secuencial, por lo que no habrá que introducir su valor para guardar nuevos anuncios, pero
+servirá para métodos que necesiten acceder a ellos de manera idempotente, por ejemplo para actualizarlos.
+---
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE)
+    @Column(name = "ID_AD")
+- El campo "tipology", al corresponderse con un enumerador, se ha mapeado como tal. Los datos se transfieren a la base de datos como 
+"String", lo que limitará sus posibles valores en base de datos a los mismos establecidos en dicho enumerador.
+---
+    @Enumerated(EnumType.STRING)
+    @Column(name = "TYPOLOGY")
+- Se ha establecido una relación "uno a muchos" con la entidad 'Picture', lo que significa que en la base de datos, ambas tablas estarán
+relacionadas través de una "foreing key" en la entidad 'Picture', lo que posilibilita guardar una o más imágenes para el mismo anuncio.
+Los parámtros empleados en la anotación indican dos cosas:
+  * Que las actualizaciones de datos realizados sobre esta entidad deben propagarse a todas las entidades relacionadas.
+  * Que el borrado de un anuncio implica el borrado de todas sus fotos.
+---
+    @OneToMany(mappedBy = "fk_ad", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<Picture> pictures;
+Además, para agilizar las consultas, va a ser conveniente que esta relación sea bidireccional, por lo que se ha de tener en cuenta a la hora
+de mapear tambien la entidad 'Picture', lo cual se explica en [siguiente apartado](#entidad-picture)
+- El campo 'score' se ha establecido como transitorio, lo que significa que no se persistirá y podemos autocalcularlo en las consultas, 
+haciendo que funcione como un campo más a la hora de filtrar. La razón de esto se explicó en el apartado 
+[Sobre el 'endpoint' para calcular las puntuaciones](#sobre-el-endpoint-para-calcular-las-puntuaciones).
+En el ejemplo de código anterior, no he manifestado cómo se va a realizar el cálculo de este campo en las consultas; este tema se
+desarrollará en un apartado posterior sobre el cálculo de puntuaciones.
+- El campo 'irrelevantSince', que es de tipo fecha, se ha establecido como de tipo 'LocalDateTime' en lugar de 'Date', que es una clase de
+'Java v8 Date Time API' que tiene algunas ventajas sobre representaciones de fecha de versiones anteriores. Algunas de estas ventajas son su
+sencillez de manejo, alta precisión de milisegundos (aunque si no se necesita tanta precisión se puede usar 'LocalDate'), ámplia API con 
+métodos para comparar o manipular fechas, inmutabilidad para más seguridad en caso de programación multi-thread y otras.
+---
+    @Column(name = "IRRELEVANT_SINCE")
+    private LocalDateTime irrelevantSince;
+#### Entidad 'Picture'
+Esta entidad se podría mapear así:
+
+    Entity(name = "picture")
+    @Table(name = "T_PICTURE")
+    
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @ToString
+    public class Picture {
+
+        @Id
+	    @GeneratedValue(strategy = GenerationType.SEQUENCE)
+        @Column(name = "ID_PICTURE")
+        private Integer id;
+        @Column(name = "URL")
+        private String url;
+        @Enumerated(EnumType.STRING)
+        @Column(name = "QUALITY")
+        private Quality quality;
+        @ManyToOne(fetch = FetchType.LAZY)
+        @JoinColumn(name = "FK_AD", nullable = false)
+        private Ad fk_ad;
+    }
+Como se puede ver, el mapeo es muy similar al de la entidad 'Ad'; se ha establecido una 'id' autogenerada de forma secuencial y se ha
+mapeado como un enumerador el campo 'quality' para limitar sus valores posibles. 
+
+Pero además se le ha añadido un nuevo campo 'fk_ad' para
+establecer la relación bidireccional con la entidad 'Ad'. Esta debe de ser "de muchos a uno", inversa a la relación establecida desde la
+entidad 'Ad'. Además conviene que las consultas de anuncios no se traigan las fotos por defecto, lo cual se establece en el parámetro de
+la anotación. También interesa que el anuncio no pueda ser un campo nulo para esta entidad en ningún caso, ya que no tiene sentido una foto
+sin un anuncio asociado.
+
+    @JoinColumn(name = "FK_AD", nullable = false)
+    private Ad fk_ad;
 ## Generalidades
 Mis consideraciones sobre aspectos más transversales observables en el código.
 ### Trazabilidad
-No se está aplicando niguna trazabilidad, es decir, 'logs'.
+No se está aplicando ninguna trazabilidad, es decir, 'logs'.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
