@@ -1,10 +1,7 @@
 # Revisión de código de clasificador de anuncios
-
 Mis consideraciones personales y propuestas de mejora para la versión actual de la API Restful para puntuación y clasificación de anuncios
 del portal "idealista.com".
-
 ## Índice de contenido
-
 * [Arquitectura](#arquitectura)
 * [Controladores](#controladores)
 * [Constantes](#constantes)
@@ -127,14 +124,14 @@ controlador, por ejemplo para el 'endpoint' cuyo contexto es "/ads/public", podr
     }
 ### Sobre el 'endpoint' para calcular las puntuaciones
 Las puntuaciones se establecen en la entidad llamando a un 'endpoint' que actualiza sus valores. Esto plantea un problema de consistencia de
-datos pues, si estos anuncios actualizados de cualquier forma que afecte a su puntuación, dicha puntuación permancerá inconsistente con los
+datos pues, si estos anuncios actualizados de cualquier forma que afecte a su puntuación, dicha puntuación permanecerá inconsistente con los
 otros datos que la afectan. Es decir, la puntuación no se corresponderá con la descripción, las fotos y demás. Naturalmente, si se consultan
 los anuncios antes de llamar a este 'endpoint', la puntuación no será la correcta, por lo que podremos tener listas de anuncios relevantes
 con anuncios que realmente son irrelevantes y viceversa.
 
-Esto podría corregirse haciendo que la puntuación sea un valor transitorio y auto-calculado en los procesos de consulta, lo cual permitiría
-prescindir del 'endpoint' de calculo y de los servicios a los que llama. La manera en que se podría implementar una solución como esta, 
-con sus ventajas e inconvenientes, se explicará con más detalle en el apartado sobre [Mapeo de entidad mediante anotaciones JPA](#mapeo-de-entidad-mediante-anotaciones-JPA).
+Esto podría corregirse haciendo que la puntuación sea un valor auto-calculado, lo cual permitiría prescindir del 'endpoint' de cálculo y de 
+los servicios a los que llama. La manera en que se podría implementar una solución como esta, con sus ventajas e inconvenientes, 
+se explicará con más detalle en el apartado sobre [Mapeo de entidad mediante anotaciones JPA](#mapeo-de-entidad-mediante-anotaciones-JPA).
 ## Constantes
 Mis consideraciones sobre la forma de declarar las constantes en el proyecto.
 ### Ajuste en el modelo de arquitectura propuesto
@@ -171,7 +168,9 @@ En cambio, si se nombran las contantes en base a su significado, por ejemplo de 
     public static final int MEDIUM_DESCRIPTION_MIN_LIMIT = 20;
     public static final int MEDIUM_DESCRIPTION_MAX_LIMIT = 49;
     public static final int LARGE_HOUSE_DESCRIPTION_SCORE = 50;
+    public static final int IRRELEVANT_SCORE_DEAD_LINE = 40;
     public static final int MAX_SCORE_LIMIT = 100;
+    public static final int MIN_SCORE_LIMIT = 0;
 Las ventajas son que nombres resultan mucho más indicativos de lo que representan, se pueden cambiar sus valores sin tener que renombrar las
 constantes y no se generan conflictos por valores que representan más de un concepto. Apreciese también que, al fijar los valores de
 puntuación que deben restarse como negativos (NO_PICS_SCORE = -10), se facilita la función de calcular dicha puntuación en el servicio,
@@ -308,7 +307,7 @@ a la hora de incluir ciertra trazabilidad a los procesos. Sobre esto me explayar
 En el apartado "[Base de datos embebida en memoria](#base-de-datos-embebida-en-memoria)" se indicó la necesidad de mapear debidamente las
 clases de entidad para poder generar los métodos de acceso a las fuentes de datos con 'JPA'. También se comentó en el apartado sobre 
 "[Sobre el 'endpoint' para calcular las puntuaciones](#sobre-el-endpoint-para-calcular-las-puntuaciones)" que el método de calculo de las
-puntuaciones se podría trasladar a la entidad haciendo de 'score' un campo transitorio autocalculado.
+puntuaciones se podría trasladar a la entidad haciendo de 'score' un campo autocalculado.
 
 A continuación se explicará como se podrían llevar a cabo estos desarrollos.
 ### Ajuste en el modelo de arquitectura propuesto
@@ -362,7 +361,7 @@ En primer lugar, vamos a mapear la clase más importante, la que ha de contener 
         private Integer houseSize;
         @Column(name = "GARDEN_SIZE")
         private Integer gardenSize;
-        @Transient
+        @Column(name = "SCORE")
         private Integer score;
         @Column(name = "IRRELEVANT_SINCE")
         private LocalDateTime irrelevantSince;
@@ -460,6 +459,77 @@ sin un anuncio asociado.
 
     @JoinColumn(name = "FK_AD", nullable = false)
     private Ad fk_ad;
+### Método de cálculo de puntuación como campo autocalculado de la entidad 'Ad'
+Cómo ya se ha indicado en el apartado [Sobre el 'endpoint' para calcular las puntuaciones](#sobre-el-endpoint-para-calcular-las-puntuaciones),
+el 'endpoint' para calcular la puntuación de los anuncios va a ser removido por los problemas de consistencia que plantea. 
+El método de cálculo de la puntuación de un anuncio se va a mover de la capa de servicio para implementarse como un método que resuelve el 
+valor del campo autocalculado 'score' de la entidad 'Ad' previamente a cualquier proceso de persistencia de dicha entidad. Esto resolverá
+el problema de consistencia de datos, ya que solo se podrá persistir un anuncio después de que el capo 'score' haya sido calculado.
+
+La forma de lograr que 'score' se auto-calcule y se fije su valor antes de la persistencia de la entidad 'Ad' es muy fácil con 'JPA'; solo
+hay que emplear las anotaciones '@PrePersist' y '@PreUpdate' en el método de cálculo del campo 'score'. Este método de cálculo será muy 
+similar al que teníamos en la capa de servicio (método 'calculateScore' de la case 'AdsServiceImpl') solo que esta vez no hará falta pasar
+el anuncio 'Ad' por parámetro, ya que estará dentro de esta misma entidad, y se introducirán unas mejoras sobre el algoritmo de cálculo 
+para mejorar su eficiencia y hacerlo más mantenible.
+
+En este ejemplo de código, se emplean las constantes sugeridas en el partado sobre [Nombres de constantes poco representativas](#nombres-de-constantes-poco-representativas)
+y se van aplican algunos métodos de cálculo que se explicarán un poco más adelante:
+
+    @PrePersist
+    @PreUpdate
+    private void calculateStore() {
+    
+        int score = 
+            calculateScoreByPics() +
+            calculateScoreByDesc() +
+            calculateScoreByCompleteness();
+    
+        score = score < Constants.MIN_SCORE_LIMIT ? Constants.MIN_SCORE_LIMIT : score;
+        score = score > Constants.MAX_SCORE_LIMIT ? Constants.MAX_SCORE_LIMIT : score;
+    
+        this.setScore(score);
+        this.setIrrelevantSince(score < Constants.IRRELEVANT_SCORE_DEAD_LINE ? LocalDateTime.now() : null);
+    
+    }
+El cálculo de la puntuación se hace por separado, en un método privado, para cada propiedad del anuncio que influye sobre la misma, siendo
+la puntuación final la suma de los resultados obtenidos para cada una de estas propiedades, a saber:
+- Puntuación por fotos, que se realiza en el método 'calculateScoreByPics'.
+- Puntuación por descripción, que se realiza en el método 'calculateScoreByDesc'.
+- Puntuación por completitud, que se realiza en el método 'calculateScoreByCompleteness'.
+De esta forma se facilita la localización de errores si se dán, el mantenimiento y la claridad del código. Además, se corrige un error
+existente en el método 'calculateScores' de la clase 'AdsServiceImpl', en la línea 119; al final del cálculo de la puntuación por
+completitud, el valor no se suma sino que se sobreescribe sobre en variable 'score', que se emplea como acumulador de la puntuación 
+definitiva.
+
+Si la puntuación que así se obtiene no es válida para el intervalo de mínimo y máximo establecido (0 - 100), esta se corrige fijándola al 
+mínimo o al máximo según sea demasiado baja o demasiado alta respectivamente.
+
+La fecha de irrelevancia se fija al momento actual si el anuncio es irrelevante y a un valor nulo si no lo es.
+
+Una vez fijado el valor del campo 'score', la entidad 'Ad' ya está lista para ser persistida o actualizada.
+
+A continuación se explica el funcionamiento de los métodos de cálculo para cada propiedad del anuncio.
+
+#### Método 'calculateScoreByPics' para el cálculo de la puntuación por fotos del anuncio
+He aquí mi propuesta para el método de cálculo de puntuación por fotos:
+
+    private int calculateScoreByPics() {
+    
+        return getPictures() == null || getPictures().isEmpty() ? Constants.NO_PICS_SCORE :
+            this.getPictures().stream()
+                .mapToInt(pic -> pic.getQuality().equals(Quality.HD) ? Constants.HD_PIC_SCORE : Constants.SD_PIC_SCORE)
+                .sum();
+    }
+A diferencia de lo que se hacía en el método 'calculateScore' del servicio, en este ejemplo se comprueba si la lista de fotos es nula o 
+está vacía, en cuyo caso se devolverá un valor negativo establecido en las constantes, por lo que no tendremos que preocuparnos en el 
+cálculo final si el valor ha de restarse o sumarse. Si el anuncio contiene fotos la lista es convertida, mediante una expresión 'lamba' a un
+'stream' de números enteros que varían de valor según la calidad de cada foto, para luego sumar todos los valores aplicando el método 'sum'.
+Esta es una forma más eficiente y mantenible de realizar el cálculo que la que se emplea en el método 'calculateScore' del servicio mediante
+bucles iterativos 'for'.
+#### Método 'calculateScoreByDesc' para el cálculo de puntuación por descripción del anuncio
+He aquí mi propuesta para el método de cálculo de puntuación por descripción:
+
+
 ## Generalidades
 Mis consideraciones sobre aspectos más transversales observables en el código.
 ### Trazabilidad
