@@ -9,6 +9,8 @@ del portal "idealista.com".
 * [Mappers](#mappers)
 * [Model](#model)
 * [Dao](#dao)
+* [Generalidades](#generalidades)
+* [Tests](#tests)
 ## Arquitectura
 Mis consideraciones sobre el modo de estructuración general del proyecto.
 ### Arquitectura hexagonal
@@ -658,54 +660,84 @@ relevantes:
             return ResponseEntity.accepted().build();
         }
     }
-_
+### Comentarios
+En general hay pocos comentarios aclaratorios acerca del propósito de clases y métodos, funcionamiento de partes del código 
+o del uso de las variables.
 
+Por ejemplo, en el controlador se podría comentar en la cabecera de cada método el proósito del 'endpoint' que resuelve, y en la capa de 
+servicio se podría comentar que se óbtiene de las consultas o la parte en la que se hace el mapeo para el DTO de salida.
+## Tests
+En general los tests son muy pobres.
+Faltaría al menos un test de integración que pudiese cargar todo el contexto de 'Spring' y probar los métodos del controlador.
+Una aproximación podría ser así:
+
+    @ExtendWith(SpringExtension.class)
+    @SpringBootTest
+    @AutoConfigureMockMvc
+    @Transactional
+    @SqlGroup({
+    @Sql(scripts = "/insertAds.sql", executionPhase = ExecutionPhase.BEFORE_TEST_METHOD),
+    @Sql(scripts = "/resetAds.sql", executionPhase = ExecutionPhase.AFTER_TEST_METHOD)
+    })
+    @Slf4j
+    public class AdsControllerTests {
     
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @BeforeAll
+    static void beforeAll() {
+    
+        log.info("AddsController tests started");
+    }
+    
+    @BeforeEach
+    void beforeEach(TestInfo testInfo) {
+    
+        log.info("AddsController test '{}' started.", testInfo.getDisplayName());
+    }
+    
+    private final String FIND_QUALITY_ADS = "/ads/quality";
+    private final String FIND_PUBLIC_ADS = "/ads/public";
+    
+    @Test
+    void qualityListingTest() {
+    
+        mockMvc.perform(get(FIND_QUALITY_ADS).contentType(CONTENT_TYPE)
+            .andExpect(status().is2xxSuccessful());
+    
+    }
+    
+    @Test
+    void publicListing() {
+    
+        mockMvc.perform(get(FIND_PUBLIC_ADS).contentType(CONTENT_TYPE)
+            .andExpect(status().is2xxSuccessful());
+    
+    }
+    
+    }
+Las anotaciones iniciales aseguran que todos los test se podrán ejecutar con el contexto de 'Spring' completo, lo que nos permite realizar
+tests que realmente sean de integración.
 
+    @ExtendWith(SpringExtension.class)
+    @SpringBootTest
+    @AutoConfigureMockMvc
+Al hacer la clase de tests transacciona, nos aseguramos de que ninguna ejecución de tests va a tener conseguencias sobre los datos reales
+que usa la aplicación.
 
+    @Transactional
+La notación en la que se establecen unos archivos '.sql' servirá para cargar estos archivos en la base de datos antes y después de cada test,
+lo que garantizará que todos los test se ejecuten con el contexto de datos que necesitan y que ninguna ejecución afectará al test siguiente.
 
+    @SqlGroup({
+    @Sql(scripts = "/insertAds.sql", executionPhase = ExecutionPhase.BEFORE_TEST_METHOD),
+    @Sql(scripts = "/resetAds.sql", executionPhase = ExecutionPhase.AFTER_TEST_METHOD)
+    })
+Sabemos que la clase de tests se está ejecutando y cual de tus tests se está ejecutando en cada momento gracias a la trazabilidad aplicada
+en los métodos anotados de esta manera:
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    @BeforeAll    
+    @BeforeEach
+Estos test son solo una aproximación a lo que deberían ser unos verdaderos tests de integración; no hacen ningún control sobre los datos 
+de salida, pero a menos verifican de los estados 'http' de respuesta son los correctos.
