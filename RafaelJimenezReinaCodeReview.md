@@ -163,11 +163,14 @@ En cambio, si se nombran las contantes en base a su significado, por ejemplo de 
     public static final int NO_PICS_SCORE = -10;
     public static final int HD_PIC_SCORE = 20;
     public static final int SD_PIC_SCORE = 10;
-    public static final int LARGE_FLOOR_DESCRIPTION_SCORE = 30;
+    public static final int LARGE_FLAT_DESCRIPTION_SCORE = 30;
+    public static final int MEDIUM_FLAT_DESCRIPTION_SCORE = 10;
+    public static final int LARGE_CHALET_DESCRIPTION_SCORE = 20;
+    public static final int SCORE_WORD_SCORE = 5;
+    public static final int MEDIUM_FLAT_DESCRIPTION_MIN_LIMIT = 20;
+    public static final int MEDIUM_FLAT_DESCRIPTION_MAX_LIMIT = 49;
+    public static final int LARGE_CHALET_DESCRIPTION_MIN_LIMIT = 50;
     public static final int FULL_AD_SCORE = 40;
-    public static final int MEDIUM_DESCRIPTION_MIN_LIMIT = 20;
-    public static final int MEDIUM_DESCRIPTION_MAX_LIMIT = 49;
-    public static final int LARGE_HOUSE_DESCRIPTION_SCORE = 50;
     public static final int IRRELEVANT_SCORE_DEAD_LINE = 40;
     public static final int MAX_SCORE_LIMIT = 100;
     public static final int MIN_SCORE_LIMIT = 0;
@@ -386,18 +389,21 @@ En primer lugar, vamos a mapear la clase más importante, la que ha de contener 
     }
 Algunas aclaraciones sobre el mapeo de esta entidad 'Ad':
 - Se ha indicado que se ha de crear tabla denominada "T_AD" asociada a la clase, lo cual hace de ella una entidad:
----
+
+
     Entity(name = "Ad")
     @Table(name = "T_AD")
 - El campo 'id' se ha hecho autogenerado de forma secuencial, por lo que no habrá que introducir su valor para guardar nuevos anuncios, pero
 servirá para métodos que necesiten acceder a ellos de manera idempotente, por ejemplo para actualizarlos.
----
+
+
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE)
     @Column(name = "ID_AD")
 - El campo "tipology", al corresponderse con un enumerador, se ha mapeado como tal. Los datos se transfieren a la base de datos como 
 "String", lo que limitará sus posibles valores en base de datos a los mismos establecidos en dicho enumerador.
----
+
+
     @Enumerated(EnumType.STRING)
     @Column(name = "TYPOLOGY")
 - Se ha establecido una relación "uno a muchos" con la entidad 'Picture', lo que significa que en la base de datos, ambas tablas estarán
@@ -405,7 +411,8 @@ relacionadas través de una "foreing key" en la entidad 'Picture', lo que posili
 Los parámtros empleados en la anotación indican dos cosas:
   * Que las actualizaciones de datos realizados sobre esta entidad deben propagarse a todas las entidades relacionadas.
   * Que el borrado de un anuncio implica el borrado de todas sus fotos.
----
+
+
     @OneToMany(mappedBy = "fk_ad", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Picture> pictures;
 Además, para agilizar las consultas, va a ser conveniente que esta relación sea bidireccional, por lo que se ha de tener en cuenta a la hora
@@ -419,7 +426,8 @@ desarrollará en un apartado posterior sobre el cálculo de puntuaciones.
 'Java v8 Date Time API' que tiene algunas ventajas sobre representaciones de fecha de versiones anteriores. Algunas de estas ventajas son su
 sencillez de manejo, alta precisión de milisegundos (aunque si no se necesita tanta precisión se puede usar 'LocalDate'), ámplia API con 
 métodos para comparar o manipular fechas, inmutabilidad para más seguridad en caso de programación multi-thread y otras.
----
+
+
     @Column(name = "IRRELEVANT_SINCE")
     private LocalDateTime irrelevantSince;
 #### Entidad 'Picture'
@@ -529,7 +537,80 @@ bucles iterativos 'for'.
 #### Método 'calculateScoreByDesc' para el cálculo de puntuación por descripción del anuncio
 He aquí mi propuesta para el método de cálculo de puntuación por descripción:
 
+    private int calculateScoreByDesc() {
 
+        int descScore = 0;
+    
+        if (description != null && !description.replace(" ", "").isEmpty()) {
+    
+          descScore = Constants.DESCRIPTION_IS_PRESENT_SCORE;
+    
+          String[] wordsArrayDescription = description.split(" ");
+          int wordsCount = wordsArrayDescription.length;
+    
+          if (Typology.FLAT.equals(tipology)) {
+            if (wordsCount >= Constants.MEDIUM_FLAT_DESCRIPTION_MIN_LIMIT && wordsCount <= Constants.MEDIUM_FLAT_DESCRIPTION_MAX_LIMIT) {
+              descScore += Constants.MEDIUM_FLAT_DESCRIPTION_SCORE;
+            } else if (wordsCount >= Constants.LARGE_CHALET_DESCRIPTION_MIN_LIMIT) {
+              descScore += Constants.LARGE_FLAT_DESCRIPTION_SCORE;
+            }
+          }
+          if (Typology.CHALET.equals(tipology)) {
+            if (wordsCount >= Constants.LARGE_CHALET_DESCRIPTION_MIN_LIMIT) {
+              descScore += Constants.LARGE_CHALET_DESCRIPTION_SCORE;
+            }
+          }
+    
+          descScore += Arrays.stream(new String[]{"luminoso", "nuevo", "céntrico", "reformado", "ático"})
+              .filter(scoreWord -> Arrays.stream(wordsArrayDescription).anyMatch(word -> word.equalsIgnoreCase(scoreWord)))
+              .count() * Constants.SCORE_WORD_SCORE;
+        }
+    
+        return descScore;
+    }
+Se pueden apreciar varias diferencias importantes respecto a la forma de sumar los puntos de la descripción del método de la capa de 
+servicio:
+- No se recurre a ningún 'wrapper' para controlar el campo 'description' nulo o vacío. Si de todas formas va a haber que controlar que no
+contenga solo espacios en blanco, crear este 'Optional' es un gasto de memoria estéril. Naturalmente, solo se cuentan los puntos si la 
+descripción tiene contenido, en caso contrario se devuelve cero.
+
+
+    if (description != null && !description.replace(" ", "").isEmpty()) {
+- Se cuentan las palabras del texto empleando el atributo 'lenght' del array que se obtiene de separar el texto por espacios con el método
+'split'. Convertir el texto a "List" y emplear la función 'size' cada vez que se necesita obtener el número de palabras es un consumo
+innecesario de recursos del servidor.
+
+
+    String[] wordsArrayDescription = description.split(" ");
+    int wordsCount = wordsArrayDescription.length;
+- Para contar los puntos por palabras puntuables, en lugar de una sucesión de sentencias 'if' tan larga como la cantidad de palabras que 
+puntúan en la descripción, se recurre a un 'predicate' implementado como una 'lambda' para realizar esta función:
+  - Se obtiene la lista de palabras que puntúan como un 'stream'.
+  - Se filtra esta lista de palabras que puntúan por aquellas que están contenidas en el texto de la descripción. Para ello, se emplea el 
+  método 'anyMatch' sobre al 'array' que contiene todas las palabras de la descripción, lo cual nos permite comparar las palabras con 
+  el método 'equalsIgnoreCase', que descarta las diferencias por mayúsculas y minúsculas.
+  - Se cuentan las palabras puntables que quedan después de filtrarlas y se multiplican por el valor de puntuación por palabra establecido
+  en las constantes, que actualmente es 'Constants.SCORE_WORD_SCORE = 5'.
+
+
+    descScore += Arrays.stream(new String[]{"luminoso", "nuevo", "céntrico", "reformado", "ático"})
+              .filter(scoreWord -> Arrays.stream(wordsArrayDescription).anyMatch(word -> word.equalsIgnoreCase(scoreWord)))
+              .count() * Constants.SCORE_WORD_SCORE;
+
+Ejemplo: Si tenemos el texto de descripción como este:
+    "Vendo preciosa casa de campo en Alpedrete del Condado, en estado casi **nuevo**, garage recién **reformado** y **luminoso** jardín".
+El filtrado de las palabras puntuables arrojaría este resultado:
+    {nuevo, reformado, luminoso}
+Cuyo conteo arrojaría un resultado de tres palabras puntuables, que al multiplicarse por los cinco puntos establecidos por palabra, da un
+resultado de 15 puntos.
+#### Método 'calculateScoreByCompleteness' para el cálculo de la puntuación por completitud del anuncio
+Para este cálculo, simplemente vamos a aprovechar el método 'isComplete' ya existente en la entidad 'Ad' y vamos a devolver la puntuación
+establecida en las constantes o cero según el anuncio sea completo o no.
+
+    private int calculateScoreByCompleteness() {
+    
+        return isComplete() ? Constants.FULL_AD_SCORE : 0;
+    }
 ## Generalidades
 Mis consideraciones sobre aspectos más transversales observables en el código.
 ### Trazabilidad
