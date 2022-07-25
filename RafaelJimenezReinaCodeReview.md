@@ -615,6 +615,54 @@ establecida en las constantes o cero según el anuncio sea completo o no.
 Mis consideraciones sobre aspectos más transversales observables en el código.
 ### Trazabilidad
 No se está aplicando ninguna trazabilidad, es decir, 'logs'.
+Se podría implentar fácilmente la trazabilidad con una anotación de la librería 'lombok', como esta:
+
+    @Slf4j
+Los lugares en los que sería más interesante aplicar estos 'logs' de trazabilidad será en los controladores, las clases de la capa de 
+servicio, la clases de la capa 'dao' y, ya que se ha propuesto aplicar métodos para campos auto-calculados en las entidades, también en
+estos métodos.
+
+Sería conveniente introducir 'logs' informativos de aviso de inicio y fin de procesos, como por ejemplo al inicio y fin de una consulta
+de anuncios. Estos podrían mostrarse u omitirse dependiendo de la configuración del servidor para ahorrar recursos en entornos de producción 
+y disponer de más trazabilidad en entornos de desarrollo. También sería muy útil tener 'logs' de aviso de error en caso de excepciones.
+
+Este es un ejemplo de como se podría aplicar la trazabilidad en el controlador principal, al menos en el 'endpoint' de consulta de anuncios
+relevantes:
+
+    @RestController
+    @Slf4j
+    public class AdsController {
+    
+        @Autowired
+        private AdsService adsService;
+    
+        @GetMapping("/ads/quality")
+        public ResponseEntity<List<QualityAd>> qualityListing() {
+            return ResponseEntity.ok(adsService.findQualityAds());
+        }
+    
+        @GetMapping("/ads/public")
+        public ResponseEntity<?> publicListing() {
+          try {
+            log.debug("The relevant ads query is going to be thrown.");
+            return ResponseEntity.ok(adsService.findPublicAds());
+          }catch(Exception e) {
+            log.error("An error happened when trying to find the relevant ads: {}.", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("An error happened when trying to find the relevant ads.");
+          }
+        }
+    
+        @GetMapping("/ads/score")
+        public ResponseEntity<Void> calculateScore() {
+            adsService.calculateScores();
+            return ResponseEntity.accepted().build();
+        }
+    }
+_
+
+    
+
+
 
 
 
